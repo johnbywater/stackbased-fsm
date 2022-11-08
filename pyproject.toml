@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "stackbased-fsm"
-version = "0.1.dev0"
+version = "0.1"
 description = "Stack-Based Finite State Machine"
 authors = [
     "John Bywater <john.bywater@appropriatesoftware.net>",
