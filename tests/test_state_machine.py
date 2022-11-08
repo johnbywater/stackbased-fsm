@@ -16,12 +16,12 @@ from stackbased_fsm.state_machine import (
     LiteralCondition,
     RepeatUntil,
     RepeatWhile,
+    SequenceOfStates,
     State,
     StateMachine,
     StateMachineError,
     Steps,
     TLiteral,
-    _SequenceOfStates,
 )
 
 
@@ -72,10 +72,14 @@ class TestStackBasedStateMachine:
             " - last popped: None"
         )
 
+    def test_verbose_print_statements(self):
+        self.sm = StateMachine[ExampleContext](self.context, is_verbose=True)
+        self.sm.run([ExampleState1, ExampleState1])
+
     def test_push_object_sequence_of_state_types(self) -> None:
         # Can push list of state types.
         self.sm.push([ExampleState1, ExampleState2])
-        assert isinstance(self.sm.stack[0], _SequenceOfStates)
+        assert isinstance(self.sm.stack[0], SequenceOfStates)
         self.sm.just_pushed = None
         self.sm.just_popped = None
 
@@ -385,6 +389,50 @@ class TestStackBasedStateMachine:
 
         self.sm.run(Steps[IncrementC, IncrementC, IncrementC])
         assert self.context.c == 3
+
+    def test_SequenceOfStates_as_generic_alias(self):
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        self.sm.run(SequenceOfStates[IncrementC, IncrementC, IncrementC])
+        assert self.context.c == 3
+
+    def test_SequenceOfStates_as_type(self):
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        class MySequenceOfStates(SequenceOfStates[IncrementC, IncrementC, IncrementC]):
+            pass
+
+        self.sm.run(MySequenceOfStates)
+        assert self.context.c == 3
+
+        class MySubclass(MySequenceOfStates):
+            pass
+
+        self.context.c = 0
+        self.sm.run(MySubclass)
+        assert self.context.c == 3
+
+    def test_SequenceOfStates_as_generic_subclass(self):
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        class MySequenceOfStates(SequenceOfStates[IncrementC, IncrementC, IncrementC]):
+            pass
+
+        class MyGenericSubclass(MySequenceOfStates, Generic[T]):
+            pass
+
+        # Todo: Actually support this?
+        with pytest.raises(TypeError):
+            self.sm.run(MyGenericSubclass[int])
 
     def test_run_Until(self) -> None:
         class CEqualsThree(ExampleState, ConditionState[ExampleContext]):

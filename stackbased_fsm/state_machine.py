@@ -154,15 +154,15 @@ class Block(State[TContext], Generic[TContext, TState]):
             )
 
 
-class _SequenceOfStates(State[TContext]):
+class SequenceOfStates(State[Context], Generic[Unpack[TStates]]):
     """
     Constructed by a Tuple type construct or a Sequence object.
     """
 
     def __init__(
         self,
-        sm: StateMachine[TContext],
-        tv_sequence: Sequence[Type[State[TContext]]],
+        sm: StateMachine[Context],
+        tv_sequence: Sequence[Type[State[Context]]],
     ):
         super().__init__(sm=sm)
         self._tv_sequence = tv_sequence
@@ -177,9 +177,27 @@ class _SequenceOfStates(State[TContext]):
     def resume(self) -> None:
         self.enter()
 
+    @classmethod
+    def construct_from_type(cls, sm: StateMachine) -> State:
+        orig_bases__ = cls.__orig_bases__  # type: ignore
+        assert len(orig_bases__) == 1
+        base_alias = orig_bases__[0]
+        base_origin = get_origin(base_alias)
+        assert base_origin is SequenceOfStates
+        type_args = get_args(base_alias)
+        return cls(sm=sm, tv_sequence=type_args)
+        # else:
+        #     raise TypeError(f"pushed type '{cls}' is not supported")
+
+    @classmethod
+    def construct_from_generic_alias(cls, sm: StateMachine, alias: object) -> State:
+        type_args = get_args(alias)
+        return cls(sm=sm, tv_sequence=type_args)
+
 
 class StateMachine(Generic[TContext]):
-    def __init__(self, context: TContext):
+    def __init__(self, context: TContext, is_verbose: bool = False):
+        self._is_verbose = is_verbose
         self._context = context
         self._loop_count = 0
         self.stack: List[StateAlias] = []
@@ -222,7 +240,8 @@ class StateMachine(Generic[TContext]):
         self.push(initial)
         while self.stack or self.just_popped:
             if self.just_pushed is None and self.just_popped is None:
-                print("Resumed:", self.stack[-1])
+                if self._is_verbose:
+                    print("Resumed:", self.stack[-1])
                 self.stack[-1].resume()
             if (
                 self.just_pushed is None
@@ -233,20 +252,22 @@ class StateMachine(Generic[TContext]):
             just_popped, just_pushed = self.just_popped, self.just_pushed
             self.just_popped, self.just_pushed = None, None
             if just_popped is not None:
-                # print("Popped:", just_popped)
                 self.last_popped = just_popped
                 assert isinstance(just_popped, State)
-                print("Exited:", just_popped)
+                if self._is_verbose:
+                    print("Exited:", just_popped)
                 just_popped.exit()
             if just_pushed is not None:
                 if just_popped is None:
                     if len(self.stack) > 1:
-                        print("Suspended:", self.stack[-2])
+                        if self._is_verbose:
+                            print("Suspended:", self.stack[-2])
                         self.stack[-2].suspend()
                 # print("Pushed:", just_pushed)
                 self.last_pushed = just_pushed
                 assert isinstance(just_pushed, State), just_pushed
-                print("Entered:", just_pushed)
+                if self._is_verbose:
+                    print("Entered:", just_pushed)
                 just_pushed.enter()
             self._loop_count += 1
 
@@ -257,7 +278,7 @@ class StateMachine(Generic[TContext]):
     def _new_state_from_pushed_type(self, pushed: PushableTypes) -> StateAlias:
         new_state: StateAlias
         if isinstance(pushed, Sequence):
-            return _SequenceOfStates(sm=self, tv_sequence=pushed)
+            return SequenceOfStates(sm=self, tv_sequence=pushed)
         elif isinstance(pushed, type):
             if not issubclass(pushed, State):
                 raise TypeError(
@@ -277,9 +298,9 @@ class StateMachine(Generic[TContext]):
                             " Tuple"
                         )
 
-                    return _SequenceOfStates(sm=self, tv_sequence=typing_args)
+                    return SequenceOfStates(sm=self, tv_sequence=typing_args)
                 elif issubclass(typing_origin, Steps):
-                    return _SequenceOfStates(sm=self, tv_sequence=typing_args)
+                    return SequenceOfStates(sm=self, tv_sequence=typing_args)
 
                 elif issubclass(typing_origin, State):
                     return typing_origin.construct_from_generic_alias(
