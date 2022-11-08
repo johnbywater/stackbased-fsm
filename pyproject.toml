@@ -38,6 +38,7 @@ pre-commit = "*"
 pre-commit-hooks = "*"
 pytest = "*"
 pytest-cov = "*"
+pyright = "*"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

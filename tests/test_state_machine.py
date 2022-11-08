@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple, TypeVar, Union, get_args
+from typing import Any, Generic, List, Literal, Tuple, TypeVar, Union, get_args
 
 import pytest
 
@@ -13,19 +13,22 @@ from stackbased_fsm.state_machine import (
     ConditionState,
     Context,
     DoStepsUntil,
+    LiteralCondition,
     RepeatUntil,
     RepeatWhile,
     State,
     StateMachine,
     StateMachineError,
-    _StateSequence,
+    Steps,
+    TLiteral,
+    _SequenceOfStates,
 )
 
 
 class TestStackBasedStateMachine:
     def setup_method(self) -> None:
-        self.context = ExampleStackContext()
-        self.sm = StateMachine[ExampleStackContext](self.context)
+        self.context = ExampleContext()
+        self.sm = StateMachine[ExampleContext](self.context)
         assert self.sm.stack == []
         assert self.sm.just_pushed is None
         assert self.sm.just_popped is None
@@ -72,7 +75,7 @@ class TestStackBasedStateMachine:
     def test_push_object_sequence_of_state_types(self) -> None:
         # Can push list of state types.
         self.sm.push([ExampleState1, ExampleState2])
-        assert isinstance(self.sm.stack[0], _StateSequence)
+        assert isinstance(self.sm.stack[0], _SequenceOfStates)
         self.sm.just_pushed = None
         self.sm.just_popped = None
 
@@ -91,19 +94,19 @@ class TestStackBasedStateMachine:
     def test_invalid_push_raises_type_error(self) -> None:
         with pytest.raises(TypeError) as e:
             self.sm.push(int)  # type: ignore
-        assert str(e.value) == "pushed type 'int' not a subclass of StackedState"
+        assert (
+            str(e.value)
+            == "pushed type 'int' not a subclass of <class"
+            " 'stackbased_fsm.state_machine.State'>"
+        )
 
         with pytest.raises(TypeError) as e:
             self.sm.push(1)  # type: ignore
-        assert str(e.value) == "pushed object '1' not a subscripted type"
+        assert str(e.value) == "pushed object '1' not supported"
 
         with pytest.raises(TypeError) as e:
             self.sm.push(List[int])  # type: ignore
-        assert (
-            str(e.value)
-            == "pushed subscripted type 'typing.List[int]' not a GenericStackedState or"
-            " variadic Tuple"
-        )
+        assert str(e.value) == "pushed object 'typing.List[int]' not supported"
 
         with pytest.raises(TypeError) as e:
             self.sm.push(Tuple[ExampleState1, ...])  # type: ignore
@@ -117,8 +120,25 @@ class TestStackBasedStateMachine:
             self.sm.push(Block)
         assert (
             str(e.value)
-            == "pushed type '<class"
-            " 'stackbased_fsm.state_machine.Block'>' is an unsubscripted Block"
+            == "pushed type '<class 'stackbased_fsm.state_machine.Block'>' is an"
+            " unsubscripted <class 'stackbased_fsm.state_machine.Block'>"
+        )
+
+        with pytest.raises(TypeError) as e:
+            self.sm.push(Block[Context])  # type: ignore
+        assert (
+            str(e.value)
+            == "Too few parameters for <class 'stackbased_fsm.state_machine.Block'>; "
+            "actual 1, expected 2"
+        )
+
+        with pytest.raises(TypeError) as e:
+            self.sm.push(Block[Context, TExampleState])
+        assert (
+            str(e.value)
+            == "parameter of "
+            "stackbased_fsm.state_machine.Block[stackbased_fsm.state_machine.Context, "
+            "~TExampleState] is not a pushable type: ~TExampleState"
         )
 
     def test_pop(self) -> None:
@@ -332,18 +352,57 @@ class TestStackBasedStateMachine:
         assert self.context.b == "example 20 exited last"
         assert self.sm.loop_count == 14
 
+    def test_run_ExampleState21(self) -> None:
+        # Example 21 is a generic class in another type variable.
+        self.sm.run(ExampleState21[int])
+        assert self.context.a == "example 21 entered last"
+        assert self.context.b == "example 21 exited last"
+
+    def test_run_ExampleState22(self) -> None:
+        # Example 21 is a generic class in another type variable.
+        self.sm.run(ExampleState22[Literal["my literal"]])
+        assert self.context.a == "example 22 ('my literal') entered last"
+        assert self.context.b == "example 22 ('my literal') exited last"
+
+        self.sm.run(ExampleState22[Literal[256]])
+        assert self.context.a == "example 22 (256) entered last"
+        assert self.context.b == "example 22 (256) exited last"
+
+    def test_run_Tuple(self) -> None:
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        self.sm.run(Tuple[IncrementC, IncrementC, IncrementC])
+        assert self.context.c == 3
+
+    def test_run_Steps(self) -> None:
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        self.sm.run(Steps[IncrementC, IncrementC, IncrementC])
+        assert self.context.c == 3
+
     def test_run_Until(self) -> None:
-        class CEqualsSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CEqualsThree(ExampleState, ConditionState[ExampleContext]):
+            def condition(self) -> bool:
+                return self.context.c == 3
+
+        class CEqualsSix(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c == 6
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1
+                self.pop()
 
         # Run as subscripted type construct..
-        self.sm.run(RepeatUntil[CEqualsSix, IncrementC])
-        assert self.context.c == 6
+        self.sm.run(RepeatUntil[CEqualsThree, IncrementC])
+        assert self.context.c == 3
 
         # Run as subclass of fully subscripted class.
         class MyUntil(RepeatUntil[CEqualsSix, IncrementC]):
@@ -355,17 +414,22 @@ class TestStackBasedStateMachine:
         # Todo: Partially subscripted base class with TypeVar filled by subclass.
 
     def test_run_While(self) -> None:
-        class CLessThanSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CLessThanThree(ExampleState, ConditionState[ExampleContext]):
+            def condition(self) -> bool:
+                return self.context.c < 3
+
+        class CLessThanSix(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c < 6
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1
+                self.pop()
 
         # Run as subscripted type construct..
-        self.sm.run(RepeatWhile[CLessThanSix, IncrementC])
-        assert self.context.c == 6
+        self.sm.run(RepeatWhile[CLessThanThree, IncrementC])
+        assert self.context.c == 3
 
         # Run as subclass of fully subscripted class.
         class MyWhile(RepeatWhile[CLessThanSix, IncrementC]):
@@ -384,13 +448,14 @@ class TestStackBasedStateMachine:
         # assert self.context.c == 6
 
     def test_run_ContinueUnless_with_Tuple_of_steps(self) -> None:
-        class CEqualsSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CEqualsSix(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c == 6
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1
+                self.pop()
 
         # Run as subscripted - pop before doing all steps.
         self.sm.run(
@@ -427,13 +492,14 @@ class TestStackBasedStateMachine:
         assert self.context.c == 3
 
     def test_run_ContinueUnless_with_non_Tuple_raises_TypeError(self) -> None:
-        class CEqualsSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CEqualsSix(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c == 6  # pragma: no cover
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1  # pragma: no cover
+                self.pop()
 
         # Run as subscripted with non-Tuple.
         with pytest.raises(TypeError) as e:
@@ -452,17 +518,18 @@ class TestStackBasedStateMachine:
         )
 
     def test_run_AnyCondition(self) -> None:
-        class CEqualsSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CEqualsSix(ExampleCondition):
             def condition(self) -> bool:
                 return self.context.c == 6
 
-        class CEqualsThree(ExampleState, ConditionState[ExampleStackContext]):
+        class CEqualsThree(ExampleCondition):
             def condition(self) -> bool:
                 return self.context.c == 3
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1
+                self.pop()
 
         # Run as subscripted.
         self.sm.run(
@@ -491,17 +558,18 @@ class TestStackBasedStateMachine:
         assert self.context.c == 3
 
     def test_run_AllConditions(self) -> None:
-        class CGreaterThanSix(ExampleState, ConditionState[ExampleStackContext]):
+        class CGreaterThanSix(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c > 6
 
-        class CGreaterThanThree(ExampleState, ConditionState[ExampleStackContext]):
+        class CGreaterThanThree(ExampleState, ConditionState[ExampleContext]):
             def condition(self) -> bool:
                 return self.context.c > 3
 
         class IncrementC(ExampleState):
             def enter(self) -> None:
                 self.context.c += 1
+                self.pop()
 
         # Run as subscripted.
         self.sm.run(
@@ -512,7 +580,7 @@ class TestStackBasedStateMachine:
                         CGreaterThanThree,
                     ]
                 ],
-                Tuple[
+                Steps[
                     IncrementC,
                     IncrementC,
                     IncrementC,
@@ -528,8 +596,61 @@ class TestStackBasedStateMachine:
         )
         assert self.context.c == 7
 
+    def test_run_LiteralCondition(self) -> None:
+        class CGreaterThan(LiteralCondition[ExampleContext, TLiteral]):
+            def condition(self) -> bool:
+                return self.context.c > self.literal
 
-class ExampleStackContext(Context):
+        class IncrementC(ExampleState):
+            def enter(self) -> None:
+                self.context.c += 1
+                self.pop()
+
+        # Run as subscripted.
+        self.sm.run(
+            DoStepsUntil[
+                CGreaterThan[Literal[6]],
+                Steps[
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                ],
+            ]
+        )
+        assert self.context.c == 7
+
+        class CGreaterThan10(CGreaterThan[Literal[10]]):
+            pass
+
+        # Run as subclass.
+        self.sm.run(
+            DoStepsUntil[
+                CGreaterThan10,
+                Steps[
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                    IncrementC,
+                ],
+            ]
+        )
+        assert self.context.c == 11
+
+
+class ExampleContext(Context):
     def __init__(self) -> None:
         self.a = ""
         self.b = ""
@@ -538,7 +659,11 @@ class ExampleStackContext(Context):
         self.e = 0  # for example 15
 
 
-class ExampleState(State[ExampleStackContext]):
+class ExampleState(State[ExampleContext]):
+    pass
+
+
+class ExampleCondition(ConditionState[ExampleContext]):
     pass
 
 
@@ -610,7 +735,7 @@ class ExampleState8(ExampleState):
         self.context.a = "example 8 entered last"
         self.push(ExampleState7)
 
-    def reenter(self) -> None:
+    def resume(self) -> None:
         raise Exception("Shouldn't get here")
 
     def exit(self) -> None:
@@ -622,7 +747,7 @@ class ExampleState9(ExampleState):
         self.context.a = "example 9 entered last"
         self.push(ExampleState1)
 
-    def reenter(self) -> None:
+    def resume(self) -> None:
         if self.context.c < 6:
             self.context.c += 1
             self.push(ExampleState1)
@@ -636,7 +761,7 @@ class ExampleState10(ExampleState):
         self.context.a = "example 10 entered last"
         self.push(ExampleState9)
 
-    def reenter(self) -> None:
+    def resume(self) -> None:
         if self.context.d < 1:
             self.context.c = 0
             self.context.d += 1
@@ -692,11 +817,11 @@ TExampleState = TypeVar(
 )
 
 
-class GenericExampleState(ExampleState, Block[ExampleStackContext, TExampleState]):
+class ExampleBlockSubclass(ExampleState, Block[ExampleContext, TExampleState]):
     pass
 
 
-class ExampleState13(GenericExampleState[TExampleState]):
+class ExampleState13(ExampleBlockSubclass[TExampleState]):
     def enter(self) -> None:
         self.context.a = "example 13 entered last"
         self.push(self._tv_block)
@@ -705,7 +830,7 @@ class ExampleState13(GenericExampleState[TExampleState]):
         self.context.b = "example 13 exited last"
 
 
-class ExampleState14(GenericExampleState[TExampleState]):
+class ExampleState14(ExampleBlockSubclass[TExampleState]):
     def enter(self) -> None:
         self.context.a = "example 14 entered last"
         self.poppush(self._tv_block)
@@ -714,11 +839,11 @@ class ExampleState14(GenericExampleState[TExampleState]):
         self.context.b = "example 14 exited last"
 
 
-class ExampleWhileLoopState(GenericExampleState[TExampleState], ABC):
+class ExampleWhileLoopState(ExampleBlockSubclass[TExampleState], ABC):
     def enter(self) -> None:
         self._enter_or_reenter()
 
-    def reenter(self) -> None:
+    def resume(self) -> None:
         self._enter_or_reenter()
 
     def _enter_or_reenter(self) -> None:
@@ -768,13 +893,13 @@ class ExampleState17(ExampleState):
         self.context.b = "example 17 exited last"
 
 
-class ExampleState18(GenericExampleState[TExampleState]):
+class ExampleState18(ExampleBlockSubclass[TExampleState]):
     def enter(self) -> None:
         self.context.a = "example 18 entered last"
         self._iter = iter(get_args(self._tv_block))
         self._next()
 
-    def reenter(self) -> None:
+    def resume(self) -> None:
         self._next()
 
     def _next(self) -> None:
@@ -803,3 +928,38 @@ class ExampleState20(ExampleState18[Tuple[ExampleState19, ExampleState19]]):
 
     def exit(self) -> None:
         self.context.b = "example 20 exited last"
+
+
+T = TypeVar("T")
+
+
+class ExampleState21(State[ExampleContext], Generic[T]):
+    def enter(self) -> None:
+        super().enter()
+        self.context.a = "example 21 entered last"
+
+    def exit(self) -> None:
+        self.context.b = "example 21 exited last"
+
+
+class LiteralState(State[ExampleContext], Generic[T]):
+    def __init__(self, sm: StateMachine[ExampleContext], literal: Any):
+        super().__init__(sm=sm)
+        self.literal = literal
+
+    @classmethod
+    def construct_from_generic_alias(
+        cls, sm: StateMachine, alias: object
+    ) -> LiteralState:
+        literal_type = get_args(alias)[0]
+        literal_args = get_args(literal_type)
+        return cls(sm, *literal_args)
+
+
+class ExampleState22(LiteralState[T]):
+    def enter(self) -> None:
+        super().enter()
+        self.context.a = f"example 22 ({repr(self.literal)}) entered last"
+
+    def exit(self) -> None:
+        self.context.b = f"example 22 ({repr(self.literal)}) exited last"

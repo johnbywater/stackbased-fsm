@@ -225,7 +225,7 @@ python-versions = ">=3.6"
 
 [[package]]
 name = "mypy"
-version = "0.982"
+version = "0.990"
 description = "Optional static typing for Python"
 category = "dev"
 optional = false
@@ -238,6 +238,7 @@ typing-extensions = ">=3.10"
 
 [package.extras]
 dmypy = ["psutil (>=4.0)"]
+install-types = ["pip"]
 python2 = ["typed-ast (>=1.4.0,<2)"]
 reports = ["lxml"]
 
@@ -356,6 +357,21 @@ python-versions = ">=3.6.8"
 diagrams = ["railroad-diagrams", "jinja2"]
 
 [[package]]
+name = "pyright"
+version = "1.1.278"
+description = "Command line wrapper for pyright"
+category = "dev"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+nodeenv = ">=1.6.0"
+
+[package.extras]
+all = ["twine (>=3.4.1)"]
+dev = ["twine (>=3.4.1)"]
+
+[[package]]
 name = "pytest"
 version = "7.2.0"
 description = "pytest: simple powerful testing with Python"
@@ -465,7 +481,7 @@ testing = ["coverage (>=6.2)", "coverage-enable-subprocess (>=1)", "flaky (>=3.7
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.8"
-content-hash = "fc6462e60e551645633c6bf6bf417e710d6ab3b6f8161b5c890058ff3970e0af"
+content-hash = "29cfe1f84ea77100d3e21ea65d0e07a03cf2430fd326054973e6ca71fc0498f6"
 
 [metadata.files]
 attrs = []
@@ -499,6 +515,7 @@ pre-commit-hooks = []
 pycodestyle = []
 pyflakes = []
 pyparsing = []
+pyright = []
 pytest = []
 pytest-cov = []
 pyyaml = []

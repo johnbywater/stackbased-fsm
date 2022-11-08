@@ -56,10 +56,15 @@ lint-isort:
 
 .PHONY: lint-mypy
 lint-mypy:
-	$(POETRY) run mypy
+	$(POETRY) run mypy --enable-incomplete-feature=TypeVarTuple --enable-incomplete-feature=Unpack
+
+.PHONY: lint-pyright
+lint-pyright:
+	$(POETRY) run pyright .
 
 .PHONY: lint-python
-lint-python: lint-black lint-flake8 lint-isort lint-mypy
+# lint-python: lint-black lint-flake8 lint-isort lint-mypy
+lint-python: lint-black lint-flake8 lint-isort lint-pyright
 
 .PHONY: lint
 lint: lint-python
