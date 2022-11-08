@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Generic, List, Literal, Tuple, TypeVar, Union, get_args
 
@@ -129,13 +130,20 @@ class TestStackBasedStateMachine:
             " unsubscripted <class 'stackbased_fsm.state_machine.Block'>"
         )
 
+        if sys.version_info[0:2] <= (3, 10):
+            expected_error_str = (
+                "Too few parameters for <class 'stackbased_fsm.state_machine.Block'>; "
+                "actual 1, expected 2"
+            )
+        else:
+            expected_error_str = (
+                "Too few arguments for <class 'stackbased_fsm.state_machine.Block'>; "
+                "actual 1, expected 2"
+            )
+
         with pytest.raises(TypeError) as e:
             self.sm.push(Block[Context])  # type: ignore
-        assert (
-            str(e.value)
-            == "Too few parameters for <class 'stackbased_fsm.state_machine.Block'>; "
-            "actual 1, expected 2"
-        )
+        assert str(e.value) == expected_error_str
 
         with pytest.raises(TypeError) as e:
             self.sm.push(Block[Context, TExampleState])
