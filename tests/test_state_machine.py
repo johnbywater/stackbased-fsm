@@ -20,7 +20,6 @@ from stackbased_fsm.state_machine import (
     State,
     StateMachine,
     StateMachineError,
-    Steps,
     TLiteral,
 )
 
@@ -106,11 +105,13 @@ class TestStackBasedStateMachine:
 
         with pytest.raises(TypeError) as e:
             self.sm.push(1)  # type: ignore
-        assert str(e.value) == "pushed object '1' not supported"
+        assert str(e.value) == "can't construct new state object from '1'"
 
         with pytest.raises(TypeError) as e:
             self.sm.push(List[int])  # type: ignore
-        assert str(e.value) == "pushed object 'typing.List[int]' not supported"
+        assert (
+            str(e.value) == "can't construct new state object from 'typing.List[int]'"
+        )
 
         with pytest.raises(TypeError) as e:
             self.sm.push(Tuple[ExampleState1, ...])  # type: ignore
@@ -381,15 +382,6 @@ class TestStackBasedStateMachine:
         self.sm.run(Tuple[IncrementC, IncrementC, IncrementC])
         assert self.context.c == 3
 
-    def test_run_Steps(self) -> None:
-        class IncrementC(ExampleState):
-            def enter(self) -> None:
-                self.context.c += 1
-                self.pop()
-
-        self.sm.run(Steps[IncrementC, IncrementC, IncrementC])
-        assert self.context.c == 3
-
     def test_SequenceOfStates_as_generic_alias(self):
         class IncrementC(ExampleState):
             def enter(self) -> None:
@@ -589,7 +581,7 @@ class TestStackBasedStateMachine:
                         CEqualsSix,
                     ]
                 ],
-                Tuple[
+                SequenceOfStates[
                     IncrementC,
                     IncrementC,
                     IncrementC,
@@ -628,7 +620,7 @@ class TestStackBasedStateMachine:
                         CGreaterThanThree,
                     ]
                 ],
-                Steps[
+                SequenceOfStates[
                     IncrementC,
                     IncrementC,
                     IncrementC,
@@ -658,7 +650,7 @@ class TestStackBasedStateMachine:
         self.sm.run(
             DoStepsUntil[
                 CGreaterThan[Literal[6]],
-                Steps[
+                SequenceOfStates[
                     IncrementC,
                     IncrementC,
                     IncrementC,
@@ -681,7 +673,7 @@ class TestStackBasedStateMachine:
         self.sm.run(
             DoStepsUntil[
                 CGreaterThan10,
-                Steps[
+                SequenceOfStates[
                     IncrementC,
                     IncrementC,
                     IncrementC,

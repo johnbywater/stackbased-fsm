@@ -18,15 +18,6 @@ from typing import (
 
 from typing_extensions import TypeVarTuple, Unpack
 
-DType = TypeVar("DType")
-Shape = TypeVarTuple("Shape")
-
-# class Array(Generic[DType, *Shape]):
-
-
-# class Steps(_TupleType(tuple, -1, inst=False, name="Tuple"), Generic[TypeVars]):
-#     pass
-
 
 class Context:
     pass
@@ -56,7 +47,7 @@ class State(Generic[TContext], ABC):
     def enter(self) -> None:
         pass  # pragma: no cover
 
-    def suspend(self):
+    def suspend(self) -> None:
         pass
 
     def resume(self) -> None:
@@ -86,19 +77,61 @@ class State(Generic[TContext], ABC):
         return cls(sm=sm)
 
 
+TStates = TypeVarTuple("TStates")
+
+
+class SequenceOfStates(State[Context], Generic[Unpack[TStates]]):
+    """
+    Variadic generic class for a sequence of states.
+    """
+
+    def __init__(
+        self,
+        sm: StateMachine[Context],
+        tv_sequence: Sequence[Type[State[Context]]],
+    ):
+        super().__init__(sm=sm)
+        self._tv_sequence = tv_sequence
+        self._tv_iter = iter(tv_sequence)
+
+    def enter(self) -> None:
+        try:
+            self.push(next(self._tv_iter))
+        except StopIteration:
+            pass
+
+    def resume(self) -> None:
+        self.enter()
+
+    @classmethod
+    def construct_from_type(cls, sm: StateMachine) -> State:
+        orig_bases__ = cls.__orig_bases__  # type: ignore
+        assert len(orig_bases__) == 1
+        base_alias = orig_bases__[0]
+        base_origin = get_origin(base_alias)
+        assert base_origin is SequenceOfStates
+        type_args = get_args(base_alias)
+        return cls(sm=sm, tv_sequence=type_args)
+        # else:
+        #     raise TypeError(f"pushed type '{cls}' is not supported")
+
+    @classmethod
+    def construct_from_generic_alias(cls, sm: StateMachine, alias: object) -> State:
+        type_args = get_args(alias)
+        return cls(sm=sm, tv_sequence=type_args)
+
+
 StateAlias = State[Context]
 
 TStates = TypeVarTuple("TStates")
 
 
-class Steps(Generic[Unpack[TStates]]):
-    pass
-
-
 TState = TypeVar(
     "TState",
     bound=Union[
-        StateAlias, Steps, Tuple[Union[StateAlias, Tuple[StateAlias, ...]], ...]
+        StateAlias,
+        SequenceOfStates,
+        Tuple[Union[StateAlias, SequenceOfStates, Tuple[StateAlias, SequenceOfStates, ...]], ...],
     ],
 )
 
@@ -107,7 +140,7 @@ PushableTypes = Union[
     Type[StateAlias],
     Sequence[Type[StateAlias]],
     Type[Sequence[StateAlias]],
-    Type[Steps],
+    Type[SequenceOfStates],
 ]
 
 
@@ -152,47 +185,6 @@ class Block(State[TContext], Generic[TContext, TState]):
             raise TypeError(
                 f"parameter of {alias} is not a pushable type: {typing_args[-1]}"
             )
-
-
-class SequenceOfStates(State[Context], Generic[Unpack[TStates]]):
-    """
-    Constructed by a Tuple type construct or a Sequence object.
-    """
-
-    def __init__(
-        self,
-        sm: StateMachine[Context],
-        tv_sequence: Sequence[Type[State[Context]]],
-    ):
-        super().__init__(sm=sm)
-        self._tv_sequence = tv_sequence
-        self._tv_iter = iter(tv_sequence)
-
-    def enter(self) -> None:
-        try:
-            self.push(next(self._tv_iter))
-        except StopIteration:
-            pass
-
-    def resume(self) -> None:
-        self.enter()
-
-    @classmethod
-    def construct_from_type(cls, sm: StateMachine) -> State:
-        orig_bases__ = cls.__orig_bases__  # type: ignore
-        assert len(orig_bases__) == 1
-        base_alias = orig_bases__[0]
-        base_origin = get_origin(base_alias)
-        assert base_origin is SequenceOfStates
-        type_args = get_args(base_alias)
-        return cls(sm=sm, tv_sequence=type_args)
-        # else:
-        #     raise TypeError(f"pushed type '{cls}' is not supported")
-
-    @classmethod
-    def construct_from_generic_alias(cls, sm: StateMachine, alias: object) -> State:
-        type_args = get_args(alias)
-        return cls(sm=sm, tv_sequence=type_args)
 
 
 class StateMachine(Generic[TContext]):
@@ -280,12 +272,12 @@ class StateMachine(Generic[TContext]):
         if isinstance(pushed, Sequence):
             return SequenceOfStates(sm=self, tv_sequence=pushed)
         elif isinstance(pushed, type):
-            if not issubclass(pushed, State):
+            if issubclass(pushed, State):
+                return pushed.construct_from_type(sm=self)
+            else:
                 raise TypeError(
                     f"pushed type '{pushed.__name__}' not a subclass of {State}"
                 )
-            else:
-                return pushed.construct_from_type(sm=self)
         else:
             # We got an object, hopefully a subscripted type.
             typing_origin = get_origin(pushed)
@@ -299,16 +291,11 @@ class StateMachine(Generic[TContext]):
                         )
 
                     return SequenceOfStates(sm=self, tv_sequence=typing_args)
-                elif issubclass(typing_origin, Steps):
-                    return SequenceOfStates(sm=self, tv_sequence=typing_args)
-
                 elif issubclass(typing_origin, State):
                     return typing_origin.construct_from_generic_alias(
                         sm=self, alias=pushed
                     )
-            # if typing_origin is None:
-            raise TypeError(f"pushed object '{pushed}' not supported")
-            # raise TypeError(f"generic alias '{pushed}' not supported")
+            raise TypeError(f"can't construct new state object from '{pushed}'")
 
     def __str__(self) -> str:
         state_repr_strs = [
@@ -394,23 +381,8 @@ class _ConditionalBlock(
         # assert issubclass(tv_condition, State)
         return cls(sm=sm, tv_block=tv_block, tv_condition=tv_condition)
 
-
-class _ConditionalLoop(_ConditionalBlock[TContext, TConditionState, TState]):
-    def enter(self) -> None:
-        if self._has_condition_been_met():
-            self.pop()
-        elif not self._just_pushed_condition:
-            self.push(self._tv_condition)
-            self._just_pushed_condition = True
-        else:
-            self.push(self._tv_block)
-            self._just_pushed_condition = False
-
-    def resume(self) -> None:
-        self.enter()
-
     @classmethod
-    def construct_from_type(cls, sm: StateMachine) -> _ConditionalLoop:
+    def construct_from_type(cls, sm: StateMachine) -> _ConditionalBlock:
         # Look for type variable in original bases.
         # Todo: Not sure if this is good enough, but works for now...
         orig_bases__ = cls.__orig_bases__  # type: ignore
@@ -418,7 +390,7 @@ class _ConditionalLoop(_ConditionalBlock[TContext, TConditionState, TState]):
         base_type = orig_bases__[0]
         base_origin = get_origin(base_type)
         assert isinstance(base_origin, type) and issubclass(
-            base_origin, _ConditionalLoop
+            base_origin, _ConditionalBlock
         )
         type_args = get_args(base_type)
         assert len(type_args) == 2
@@ -434,27 +406,13 @@ class _ConditionalLoop(_ConditionalBlock[TContext, TConditionState, TState]):
         return cls(sm=sm, tv_block=tv_block, tv_condition=tv_condition)
 
 
-class RepeatUntil(_ConditionalLoop[Context, TConditionState, TState]):
-    CONDITION_RESULT_INITIAL_VALUE = False
-
-
-Until = RepeatUntil
-
-
-class RepeatWhile(_ConditionalLoop[Context, TConditionState, TState]):
-    CONDITION_RESULT_INITIAL_VALUE = True
-
-
-While = RepeatWhile
-
-
 class DoStepsUntil(_ConditionalBlock[Context, TConditionState, TState]):
     CONDITION_RESULT_INITIAL_VALUE = False
 
     def enter(self) -> None:
         args = get_args(self._tv_block)
         block_origin = get_origin(self._tv_block)
-        if block_origin not in (tuple, Steps):
+        if block_origin not in (tuple, SequenceOfStates):
             raise TypeError(f"Type variable origin is not {tuple}: {self._tv_block}")
         assert args, self._tv_block
         self._iter = iter(args)
@@ -476,6 +434,33 @@ class DoStepsUntil(_ConditionalBlock[Context, TConditionState, TState]):
             except StopIteration:
                 self.pop()
             self._just_pushed_condition = False
+
+
+class _ConditionalLoop(_ConditionalBlock[TContext, TConditionState, TState]):
+    def enter(self) -> None:
+        if self._has_condition_been_met():
+            self.pop()
+        elif not self._just_pushed_condition:
+            self.push(self._tv_condition)
+            self._just_pushed_condition = True
+        else:
+            self.push(self._tv_block)
+            self._just_pushed_condition = False
+
+    def resume(self) -> None:
+        self.enter()
+
+
+class RepeatUntil(_ConditionalLoop[Context, TConditionState, TState]):
+    CONDITION_RESULT_INITIAL_VALUE = False
+
+
+class RepeatWhile(_ConditionalLoop[Context, TConditionState, TState]):
+    CONDITION_RESULT_INITIAL_VALUE = True
+
+
+Until = RepeatUntil
+While = RepeatWhile
 
 
 class AnyCondition(ConditionState[Context], _ConditionedBlock[Context, TState]):
@@ -556,6 +541,7 @@ class AllConditions(ConditionState[Context], _ConditionedBlock[Context, TState])
 
 
 Or = AnyCondition
+And = AllConditions
 
 TLiteral = TypeVar("TLiteral")
 
