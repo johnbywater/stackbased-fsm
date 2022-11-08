@@ -18,7 +18,6 @@ from .state_machine import (
     While,
 )
 
-
 __all__ = [
     "AllConditions",
     "And",

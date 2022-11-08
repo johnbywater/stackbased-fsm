@@ -131,7 +131,14 @@ TState = TypeVar(
     bound=Union[
         StateAlias,
         SequenceOfStates,
-        Tuple[Union[StateAlias, SequenceOfStates, Tuple[StateAlias, SequenceOfStates, ...]], ...],
+        Tuple[
+            Union[
+                StateAlias,
+                SequenceOfStates,
+                Tuple[Union[StateAlias, SequenceOfStates], ...],
+            ],
+            ...,
+        ],
     ],
 )
 
